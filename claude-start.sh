@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# claude-launcher.sh
+# claude-start.sh
 # Claude Code 启动器 + Git Worktree 管理工具
 #
 # 功能：
@@ -10,11 +10,11 @@
 #
 # 用法：
 #   将脚本放到任意位置，cd 到项目目录后执行：
-#   bash claude-launcher.sh
+#   bash claude-start.sh
 #
 #   或赋予执行权限后直接运行：
-#   chmod +x claude-launcher.sh
-#   ./claude-launcher.sh
+#   chmod +x claude-start.sh
+#   ./claude-start.sh
 #
 
 set -euo pipefail
