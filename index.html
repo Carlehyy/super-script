@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Velorah - Where Dreams Rise</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        /* CSS Variables */
+        :root {
+            --background: 201 100% 13%;
+            --foreground: 0 0% 100%;
+            --muted-foreground: 240 4% 66%;
+            --primary: 0 0% 100%;
+            --primary-foreground: 0 0% 4%;
+            --secondary: 0 0% 10%;
+            --muted: 0 0% 10%;
+            --accent: 0 0% 10%;
+            --border: 0 0% 18%;
+            --input: 0 0% 18%;
+            --font-display: 'Instrument Serif', serif;
+            --font-body: 'Inter', sans-serif;
+        }
+        
+        body {
+            font-family: var(--font-body);
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+        
+        /* Liquid Glass Effect */
+        .liquid-glass {
+            background: rgba(255, 255, 255, 0.01);
+            background-blend-mode: luminosity;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            border: none;
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s ease;
+        }
+        
+        .liquid-glass:hover {
+            transform: scale(1.03);
+        }
+        
+        .liquid-glass::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 1.4px;
+            background: linear-gradient(180deg,
+                rgba(255,255,255,0.45) 0%, 
+                rgba(255,255,255,0.15) 20%,
+                rgba(255,255,255,0) 40%, 
+                rgba(255,255,255,0) 60%,
+                rgba(255,255,255,0.15) 80%, 
+                rgba(255,255,255,0.45) 100%);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+        
+        /* Animations */
+        @keyframes fade-rise {
+            from { 
+                opacity: 0; 
+                transform: translateY(24px); 
+            }
+            to { 
+                opacity: 1; 
+                transform: translateY(0); 
+            }
+        }
+        
+        .animate-fade-rise {
+            animation: fade-rise 0.8s ease-out both;
+        }
+        
+        .animate-fade-rise-delay {
+            animation: fade-rise 0.8s ease-out 0.2s both;
+        }
+        
+        .animate-fade-rise-delay-2 {
+            animation: fade-rise 0.8s ease-out 0.4s both;
+        }
+        
+        /* Font Classes */
+        .font-display {
+            font-family: 'Instrument Serif', serif;
+        }
+        
+        .font-body {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        /* Text Muted */
+        .text-muted-foreground {
+            color: hsl(var(--muted-foreground));
+        }
+        
+        /* Custom Text Shadow for better readability on video */
+        .text-shadow {
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        background: 'hsl(var(--background))',
+                        foreground: 'hsl(var(--foreground))',
+                        muted: {
+                            DEFAULT: 'hsl(var(--muted))',
+                            foreground: 'hsl(var(--muted-foreground))',
+                        },
+                        primary: {
+                            DEFAULT: 'hsl(var(--primary))',
+                            foreground: 'hsl(var(--primary-foreground))',
+                        },
+                        secondary: {
+                            DEFAULT: 'hsl(var(--secondary))',
+                        },
+                        border: 'hsl(var(--border))',
+                    },
+                    fontFamily: {
+                        display: ['Instrument Serif', 'serif'],
+                        body: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+<base target="_blank">
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        // Navigation Component
+        const Navigation = () => {
+            const [isScrolled, setIsScrolled] = useState(false);
+            
+            useEffect(() => {
+                const handleScroll = () => {
+                    setIsScrolled(window.scrollY > 50);
+                };
+                window.addEventListener('scroll', handleScroll);
+                return () => window.removeEventListener('scroll', handleScroll);
+            }, []);
+            
+            return (
+                <nav className={`relative z-10 w-full transition-all duration-300 ${isScrolled ? 'py-4' : 'py-6'}`}>
+                    <div className="max-w-7xl mx-auto px-8 flex justify-between items-center">
+                        {/* Logo */}
+                        <div className="text-3xl tracking-tight font-display text-foreground select-none">
+                            Velorah<sup className="text-xs">®</sup>
+                        </div>
+                        
+                        {/* Desktop Navigation */}
+                        <div className="hidden md:flex items-center gap-8">
+                            {['Home', 'Studio', 'About', 'Journal', 'Reach Us'].map((item, index) => (
+                                <a
+                                    key={item}
+                                    href="#"
+                                    className={`text-sm transition-colors duration-300 ${index === 0 ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                                >
+                                    {item}
+                                </a>
+                            ))}
+                        </div>
+                        
+                        {/* CTA Button */}
+                        <button className="liquid-glass rounded-full px-6 py-2.5 text-sm text-foreground cursor-pointer font-body">
+                            Begin Journey
+                        </button>
+                        
+                        {/* Mobile Menu Button */}
+                        <button className="md:hidden text-foreground p-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                            </svg>
+                        </button>
+                    </div>
+                </nav>
+            );
+        };
+        
+        // Hero Section Component
+        const Hero = () => {
+            return (
+                <section className="relative z-10 flex flex-col items-center justify-center text-center px-6 pt-32 pb-40 min-h-[calc(100vh-100px)]">
+                    {/* Main Heading */}
+                    <h1 
+                        className="font-display text-5xl sm:text-7xl md:text-8xl leading-[0.95] tracking-[-2.46px] max-w-7xl font-normal text-foreground text-shadow animate-fade-rise"
+                        style={{ fontFamily: "'Instrument Serif', serif" }}
+                    >
+                        Where <em className="not-italic text-muted-foreground">dreams</em> rise <br className="hidden sm:block" />
+                        <em className="not-italic text-muted-foreground">through the silence.</em>
+                    </h1>
+                    
+                    {/* Subtext */}
+                    <p className="text-muted-foreground text-base sm:text-lg max-w-2xl mt-8 leading-relaxed font-body animate-fade-rise-delay text-shadow">
+                        We're designing tools for deep thinkers, bold creators, and quiet rebels. Amid the chaos, we build digital spaces for sharp focus and inspired work.
+                    </p>
+                    
+                    {/* Hero CTA */}
+                    <button className="liquid-glass rounded-full px-14 py-5 text-base text-foreground mt-12 cursor-pointer font-body animate-fade-rise-delay-2">
+                        Begin Journey
+                    </button>
+                </section>
+            );
+        };
+        
+        // Background Video Component
+        const VideoBackground = () => {
+            return (
+                <div className="absolute inset-0 w-full h-full overflow-hidden z-0">
+                    <video
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover"
+                        poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1920 1080'%3E%3Crect fill='%23002033' width='1920' height='1080'/%3E%3C/svg%3E"
+                    >
+                        <source 
+                            src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260314_131748_f2ca2a28-fed7-44c8-b9a9-bd9acdd5ec31.mp4" 
+                            type="video/mp4" 
+                        />
+                        Your browser does not support the video tag.
+                    </video>
+                    
+                    {/* Subtle overlay for better text readability while keeping video visible */}
+                    <div className="absolute inset-0 bg-gradient-to-b from-[hsl(201,100%,13%)]/30 via-transparent to-[hsl(201,100%,13%)]/60 pointer-events-none" />
+                </div>
+            );
+        };
+        
+        // Main App Component
+        const App = () => {
+            return (
+                <div className="relative min-h-screen w-full overflow-hidden bg-background">
+                    <VideoBackground />
+                    <Navigation />
+                    <Hero />
+                </div>
+            );
+        };
+        
+        // Render the App
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
