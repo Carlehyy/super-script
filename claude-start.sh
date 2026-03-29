@@ -7,6 +7,7 @@
 #   - 环境检查（Claude 安装、用户权限、Git 仓库）
 #   - 分支路由（main / worktree 自动识别）
 #   - Worktree 创建、切换、删除
+#   - 键盘上下键交互式菜单选择
 #
 # 用法：
 #   将脚本放到任意位置，cd 到项目目录后执行：
@@ -43,7 +44,377 @@ separator() {
     echo -e "${DIM}──────────────────────────────────────────────${NC}"
 }
 
-# 启动 Claude Code 前的确认信息，然后启动
+# ============================================================
+# 交互式选择器（上下键选择）
+# ============================================================
+# 用法：
+#   select_menu RESULT_VAR "标题" "选项1" "选项2" "选项3" ...
+#
+# 返回：
+#   将用户选中的索引（从 0 开始）写入 RESULT_VAR
+#   如果用户按 ESC 或 q 取消，返回值为 255
+#
+# 键位：
+#   ↑ / k      上移
+#   ↓ / j      下移
+#   Enter      确认选择
+#   ESC / q    取消
+#
+select_menu() {
+    local _result_var="$1"
+    local _title="$2"
+    shift 2
+    local _options=("$@")
+    local _count=${#_options[@]}
+
+    # 如果没有选项，直接返回
+    if [[ $_count -eq 0 ]]; then
+        eval "$_result_var=255"
+        return 1
+    fi
+
+    # 非交互式终端 fallback 到数字输入
+    if [[ ! -t 0 ]]; then
+        echo -e "$_title"
+        for i in "${!_options[@]}"; do
+            echo -e "  [$((i+1))] ${_options[$i]}"
+        done
+        read -rp "请选择 [1-$_count]: " _choice
+        if [[ "$_choice" =~ ^[0-9]+$ ]] && [[ "$_choice" -ge 1 ]] && [[ "$_choice" -le $_count ]]; then
+            eval "$_result_var=$((_choice - 1))"
+            return 0
+        else
+            eval "$_result_var=255"
+            return 1
+        fi
+    fi
+
+    local _selected=0
+    local _key=""
+    local _escape_char
+    _escape_char=$(printf '\033')
+
+    # 隐藏光标
+    tput civis 2>/dev/null || true
+
+    # 捕获退出信号，确保恢复光标
+    trap 'tput cnorm 2>/dev/null || true; trap - INT TERM EXIT' INT TERM EXIT
+
+    # 打印标题
+    echo ""
+    echo -e "$_title"
+    echo -e "  ${DIM}使用 ↑↓ 键选择，Enter 确认，ESC 取消${NC}"
+    echo ""
+
+    # 首次绘制菜单
+    _draw_menu _options[@] $_selected $_count
+
+    # 读取按键循环
+    while true; do
+        # 读取单个字符（静默、不回显）
+        IFS= read -rsn1 _key 2>/dev/null || true
+
+        # ESC 键处理
+        if [[ "$_key" == "$_escape_char" ]]; then
+            # 尝试读取后续字符（超时 0.1 秒）
+            local _seq=""
+            IFS= read -rsn1 -t 0.1 _seq 2>/dev/null || true
+
+            if [[ -z "$_seq" ]]; then
+                # 单独按了 ESC，取消选择
+                _clear_menu $_count
+                tput cnorm 2>/dev/null || true
+                trap - INT TERM EXIT
+                eval "$_result_var=255"
+                return 1
+            fi
+
+            if [[ "$_seq" == "[" ]]; then
+                # 读取方向键的最后一个字符
+                local _arrow=""
+                IFS= read -rsn1 -t 0.1 _arrow 2>/dev/null || true
+
+                case "$_arrow" in
+                    A) # 上箭头
+                        if [[ $_selected -gt 0 ]]; then
+                            _selected=$((_selected - 1))
+                        else
+                            _selected=$((_count - 1))  # 循环到末尾
+                        fi
+                        ;;
+                    B) # 下箭头
+                        if [[ $_selected -lt $((_count - 1)) ]]; then
+                            _selected=$((_selected + 1))
+                        else
+                            _selected=0  # 循环到开头
+                        fi
+                        ;;
+                    *) # 忽略其他转义序列（左右箭头等）
+                        ;;
+                esac
+            fi
+            # 忽略其他 ESC 序列
+
+        elif [[ "$_key" == "" ]]; then
+            # Enter 键 —— 确认选择
+            _clear_menu $_count
+            tput cnorm 2>/dev/null || true
+            trap - INT TERM EXIT
+
+            # 显示选择结果
+            echo -e "  ${GREEN}●${NC} ${_options[$_selected]}"
+            echo ""
+
+            eval "$_result_var=$_selected"
+            return 0
+
+        elif [[ "$_key" == "k" || "$_key" == "K" ]]; then
+            # vim 风格：k 上移
+            if [[ $_selected -gt 0 ]]; then
+                _selected=$((_selected - 1))
+            else
+                _selected=$((_count - 1))
+            fi
+
+        elif [[ "$_key" == "j" || "$_key" == "J" ]]; then
+            # vim 风格：j 下移
+            if [[ $_selected -lt $((_count - 1)) ]]; then
+                _selected=$((_selected + 1))
+            else
+                _selected=0
+            fi
+
+        elif [[ "$_key" == "q" || "$_key" == "Q" ]]; then
+            # q 取消
+            _clear_menu $_count
+            tput cnorm 2>/dev/null || true
+            trap - INT TERM EXIT
+            eval "$_result_var=255"
+            return 1
+        fi
+        # 其他按键忽略
+
+        # 重绘菜单
+        _redraw_menu _options[@] $_selected $_count
+    done
+}
+
+# 绘制菜单（首次）
+_draw_menu() {
+    local -n _dm_opts=$1
+    local _dm_sel=$2
+    local _dm_count=$3
+
+    for i in "${!_dm_opts[@]}"; do
+        if [[ $i -eq $_dm_sel ]]; then
+            echo -e "  ${CYAN}${BOLD}● ${_dm_opts[$i]}${NC}"
+        else
+            echo -e "  ${DIM}○ ${_dm_opts[$i]}${NC}"
+        fi
+    done
+}
+
+# 重绘菜单（光标回退后重新绘制）
+_redraw_menu() {
+    local -n _rm_opts=$1
+    local _rm_sel=$2
+    local _rm_count=$3
+
+    # 光标上移 N 行
+    printf '\033[%dA' "$_rm_count"
+
+    for i in "${!_rm_opts[@]}"; do
+        # 清除当前行
+        printf '\033[2K'
+        if [[ $i -eq $_rm_sel ]]; then
+            echo -e "  ${CYAN}${BOLD}● ${_rm_opts[$i]}${NC}"
+        else
+            echo -e "  ${DIM}○ ${_rm_opts[$i]}${NC}"
+        fi
+    done
+}
+
+# 清除菜单区域（选择完成后清理）
+_clear_menu() {
+    local _cm_count=$1
+
+    # 光标上移 N 行
+    printf '\033[%dA' "$_cm_count"
+
+    for (( i = 0; i < _cm_count; i++ )); do
+        printf '\033[2K\n'
+    done
+
+    # 再上移回来
+    printf '\033[%dA' "$_cm_count"
+}
+
+# ============================================================
+# 兼容性包装：处理 Bash 3.x（macOS）不支持 nameref 的情况
+# ============================================================
+# macOS 自带 Bash 3.2 不支持 declare -n（nameref），
+# 因此用全局数组 + 简化的绘制函数替代。
+
+# 检测 Bash 版本是否支持 nameref
+_bash_supports_nameref() {
+    [[ "${BASH_VERSINFO[0]}" -ge 4 && "${BASH_VERSINFO[1]}" -ge 3 ]] || \
+    [[ "${BASH_VERSINFO[0]}" -ge 5 ]]
+}
+
+# 如果 Bash 版本过低，覆盖绘制函数为兼容版本
+if ! _bash_supports_nameref; then
+    # 使用全局数组传递选项
+    _MENU_OPTIONS=()
+
+    _draw_menu() {
+        # 参数：忽略第一个（数组引用），用全局 _MENU_OPTIONS
+        local _dm_sel=$2
+        local _dm_count=$3
+
+        for (( i = 0; i < _dm_count; i++ )); do
+            if [[ $i -eq $_dm_sel ]]; then
+                echo -e "  ${CYAN}${BOLD}● ${_MENU_OPTIONS[$i]}${NC}"
+            else
+                echo -e "  ${DIM}○ ${_MENU_OPTIONS[$i]}${NC}"
+            fi
+        done
+    }
+
+    _redraw_menu() {
+        local _rm_sel=$2
+        local _rm_count=$3
+
+        printf '\033[%dA' "$_rm_count"
+
+        for (( i = 0; i < _rm_count; i++ )); do
+            printf '\033[2K'
+            if [[ $i -eq $_rm_sel ]]; then
+                echo -e "  ${CYAN}${BOLD}● ${_MENU_OPTIONS[$i]}${NC}"
+            else
+                echo -e "  ${DIM}○ ${_MENU_OPTIONS[$i]}${NC}"
+            fi
+        done
+    }
+
+    # 覆盖 select_menu，使用 _MENU_OPTIONS 全局数组
+    select_menu() {
+        local _result_var="$1"
+        local _title="$2"
+        shift 2
+        _MENU_OPTIONS=("$@")
+        local _count=${#_MENU_OPTIONS[@]}
+
+        if [[ $_count -eq 0 ]]; then
+            eval "$_result_var=255"
+            return 1
+        fi
+
+        if [[ ! -t 0 ]]; then
+            echo -e "$_title"
+            for i in "${!_MENU_OPTIONS[@]}"; do
+                echo -e "  [$((i+1))] ${_MENU_OPTIONS[$i]}"
+            done
+            read -rp "请选择 [1-$_count]: " _choice
+            if [[ "$_choice" =~ ^[0-9]+$ ]] && [[ "$_choice" -ge 1 ]] && [[ "$_choice" -le $_count ]]; then
+                eval "$_result_var=$((_choice - 1))"
+                return 0
+            else
+                eval "$_result_var=255"
+                return 1
+            fi
+        fi
+
+        local _selected=0
+        local _key=""
+        local _escape_char
+        _escape_char=$(printf '\033')
+
+        tput civis 2>/dev/null || true
+        trap 'tput cnorm 2>/dev/null || true; trap - INT TERM EXIT' INT TERM EXIT
+
+        echo ""
+        echo -e "$_title"
+        echo -e "  ${DIM}使用 ↑↓ 键选择，Enter 确认，ESC 取消${NC}"
+        echo ""
+
+        _draw_menu "" $_selected $_count
+
+        while true; do
+            IFS= read -rsn1 _key 2>/dev/null || true
+
+            if [[ "$_key" == "$_escape_char" ]]; then
+                local _seq=""
+                IFS= read -rsn1 -t 0.1 _seq 2>/dev/null || true
+
+                if [[ -z "$_seq" ]]; then
+                    _clear_menu $_count
+                    tput cnorm 2>/dev/null || true
+                    trap - INT TERM EXIT
+                    eval "$_result_var=255"
+                    return 1
+                fi
+
+                if [[ "$_seq" == "[" ]]; then
+                    local _arrow=""
+                    IFS= read -rsn1 -t 0.1 _arrow 2>/dev/null || true
+
+                    case "$_arrow" in
+                        A)
+                            if [[ $_selected -gt 0 ]]; then
+                                _selected=$((_selected - 1))
+                            else
+                                _selected=$((_count - 1))
+                            fi
+                            ;;
+                        B)
+                            if [[ $_selected -lt $((_count - 1)) ]]; then
+                                _selected=$((_selected + 1))
+                            else
+                                _selected=0
+                            fi
+                            ;;
+                    esac
+                fi
+
+            elif [[ "$_key" == "" ]]; then
+                _clear_menu $_count
+                tput cnorm 2>/dev/null || true
+                trap - INT TERM EXIT
+                echo -e "  ${GREEN}●${NC} ${_MENU_OPTIONS[$_selected]}"
+                echo ""
+                eval "$_result_var=$_selected"
+                return 0
+
+            elif [[ "$_key" == "k" || "$_key" == "K" ]]; then
+                if [[ $_selected -gt 0 ]]; then
+                    _selected=$((_selected - 1))
+                else
+                    _selected=$((_count - 1))
+                fi
+
+            elif [[ "$_key" == "j" || "$_key" == "J" ]]; then
+                if [[ $_selected -lt $((_count - 1)) ]]; then
+                    _selected=$((_selected + 1))
+                else
+                    _selected=0
+                fi
+
+            elif [[ "$_key" == "q" || "$_key" == "Q" ]]; then
+                _clear_menu $_count
+                tput cnorm 2>/dev/null || true
+                trap - INT TERM EXIT
+                eval "$_result_var=255"
+                return 1
+            fi
+
+            _redraw_menu "" $_selected $_count
+        done
+    }
+fi
+
+# ============================================================
+# 启动 Claude Code
+# ============================================================
 launch_claude() {
     local branch="$1"
     local dir="$2"
@@ -85,7 +456,6 @@ check_not_root() {
         echo -e "  请切换到非 root 用户后再运行此脚本。"
         echo ""
 
-        # 列出系统中可登录的非 root 用户
         local users
         users=$(awk -F: '$3 >= 1000 && $3 < 65534 && $7 !~ /(nologin|false)/ {print $1}' /etc/passwd)
 
@@ -126,13 +496,9 @@ check_git_repo() {
 # 步骤 4：分支检测与路由
 # ============================================================
 
-# 获取项目基本信息
 get_project_info() {
-    # 当前分支名
     CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 
-    # 判断当前目录是否为 worktree（非主仓库）
-    # git worktree 的 .git 是一个文件而不是目录
     if [[ -f "$(git rev-parse --git-dir 2>/dev/null)/../.git" ]] || \
        [[ "$(git rev-parse --git-dir 2>/dev/null)" == *".git/worktrees/"* ]]; then
         IS_WORKTREE=true
@@ -140,17 +506,11 @@ get_project_info() {
         IS_WORKTREE=false
     fi
 
-    # 主仓库的绝对路径
     MAIN_WORKTREE_DIR=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
-
-    # 项目文件夹名（从主仓库路径提取）
     PROJECT_NAME=$(basename "$MAIN_WORKTREE_DIR")
-
-    # 主仓库的父目录（worktree 都创建在这个层级）
     PARENT_DIR=$(dirname "$MAIN_WORKTREE_DIR")
 }
 
-# 获取已有 worktree 列表（排除主仓库）
 get_worktree_list() {
     WORKTREE_LIST=()
     WORKTREE_BRANCHES=()
@@ -161,12 +521,10 @@ get_worktree_list() {
         wt_dir=$(echo "$line" | awk '{print $1}')
         wt_branch=$(echo "$line" | sed -n 's/.*\[\(.*\)\].*/\1/p')
 
-        # 跳过主仓库自身
         if [[ "$wt_dir" == "$MAIN_WORKTREE_DIR" ]]; then
             continue
         fi
 
-        # 跳过 detached HEAD 的 worktree
         if [[ -z "$wt_branch" ]]; then
             continue
         fi
@@ -177,35 +535,29 @@ get_worktree_list() {
     done < <(git worktree list)
 }
 
-# 校验分支名格式
 validate_branch_name() {
     local name="$1"
 
-    # 不能为空
     if [[ -z "$name" ]]; then
         error "分支名不能为空。"
         return 1
     fi
 
-    # 不能包含空格
     if [[ "$name" =~ \  ]]; then
         error "分支名不能包含空格：'$name'"
         return 1
     fi
 
-    # 不能包含特殊字符（仅允许字母、数字、-、_、/）
     if [[ ! "$name" =~ ^[a-zA-Z0-9/_-]+$ ]]; then
         error "分支名仅允许使用字母、数字、-、_、/ 字符：'$name'"
         return 1
     fi
 
-    # 不能以 - 开头
     if [[ "$name" == -* ]]; then
         error "分支名不能以 - 开头：'$name'"
         return 1
     fi
 
-    # 不能与已有的本地分支重名
     if git show-ref --verify --quiet "refs/heads/$name" 2>/dev/null; then
         error "分支 '$name' 已存在，请使用其他名称。"
         return 1
@@ -214,27 +566,28 @@ validate_branch_name() {
     return 0
 }
 
+# ============================================================
 # 创建新的 worktree
+# ============================================================
 create_new_worktree() {
     echo ""
-    echo -e "${CYAN}请输入新分支的名称${NC}（例如：feat/smart-picker, dev, test）："
-    echo -e "${DIM}仅允许字母、数字、-、_、/ 字符，不能有空格${NC}"
+    echo -e "${CYAN}${BOLD}◆ 创建新的 Worktree 分支${NC}"
     echo ""
-    read -rp "> " new_branch
+    echo -e "  请输入新分支的名称（例如：feat/smart-picker, dev, test）"
+    echo -e "  ${DIM}仅允许字母、数字、-、_、/ 字符，不能有空格${NC}"
+    echo ""
+    read -rp "  > " new_branch
 
-    # 校验分支名
     if ! validate_branch_name "$new_branch"; then
         echo ""
         warn "请重新运行脚本并输入有效的分支名。"
         exit 1
     fi
 
-    # 构建 worktree 目录名：将分支名中的 / 替换为 -
     local safe_branch_name
     safe_branch_name=$(echo "$new_branch" | tr '/' '-')
     local worktree_dir="${PARENT_DIR}/${PROJECT_NAME}-${safe_branch_name}"
 
-    # 检查目录是否已存在
     if [[ -d "$worktree_dir" ]]; then
         error "目录已存在：$worktree_dir"
         echo "  请选择其他分支名，或手动删除该目录后重试。"
@@ -256,52 +609,48 @@ create_new_worktree() {
     launch_claude "$new_branch" "$worktree_dir"
 }
 
+# ============================================================
 # 选择已有 worktree 并启动
+# ============================================================
 select_existing_worktree() {
     local count=${#WORKTREE_BRANCHES[@]}
 
-    echo ""
-    echo -e "${CYAN}可用的 Worktree 分支：${NC}"
-    echo ""
-
-    for i in "${!WORKTREE_BRANCHES[@]}"; do
-        local idx=$((i + 1))
-        echo -e "  ${BOLD}[$idx]${NC} ${WORKTREE_BRANCHES[$i]}"
-        echo -e "      ${DIM}${WORKTREE_DIRS[$i]}${NC}"
-    done
-
-    echo ""
-    read -rp "请选择 [1-$count]（输入 0 返回主菜单）: " choice
-
-    # 返回主菜单
-    if [[ "$choice" == "0" ]]; then
+    if [[ $count -eq 0 ]]; then
+        warn "当前没有任何 worktree 分支。"
+        echo ""
+        read -rp "按 Enter 返回主菜单..." _
         show_main_menu
         return
     fi
 
-    # 校验输入
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt $count ]]; then
-        error "无效的选择：$choice"
-        exit 1
+    # 构建选项列表（分支名 + 路径）
+    local options=()
+    for i in "${!WORKTREE_BRANCHES[@]}"; do
+        options+=("${WORKTREE_BRANCHES[$i]}  ${DIM}${WORKTREE_DIRS[$i]}${NC}")
+    done
+
+    local choice
+    if select_menu choice "${CYAN}${BOLD}◆ 选择要切换的 Worktree 分支${NC}" "${options[@]}"; then
+        local selected_branch="${WORKTREE_BRANCHES[$choice]}"
+        local selected_dir="${WORKTREE_DIRS[$choice]}"
+
+        if [[ ! -d "$selected_dir" ]]; then
+            error "Worktree 目录不存在：$selected_dir"
+            echo "  该 worktree 可能已被手动删除。请运行 git worktree prune 清理。"
+            exit 1
+        fi
+
+        launch_claude "$selected_branch" "$selected_dir"
+    else
+        # 用户取消，返回主菜单
+        show_main_menu
     fi
-
-    local selected_idx=$((choice - 1))
-    local selected_branch="${WORKTREE_BRANCHES[$selected_idx]}"
-    local selected_dir="${WORKTREE_DIRS[$selected_idx]}"
-
-    # 检查目录是否存在
-    if [[ ! -d "$selected_dir" ]]; then
-        error "Worktree 目录不存在：$selected_dir"
-        echo "  该 worktree 可能已被手动删除。请运行 git worktree prune 清理。"
-        exit 1
-    fi
-
-    launch_claude "$selected_branch" "$selected_dir"
 }
 
+# ============================================================
 # 删除已有 worktree
+# ============================================================
 delete_existing_worktree() {
-    # 只允许在 main 分支上执行删除
     if [[ "$IS_WORKTREE" == true ]]; then
         error "只能在主仓库（main 分支）目录下删除 worktree。"
         echo "  请先 cd 到 ${MAIN_WORKTREE_DIR} 后再运行脚本。"
@@ -318,94 +667,89 @@ delete_existing_worktree() {
         return
     fi
 
-    echo ""
-    echo -e "${CYAN}选择要删除的 Worktree 分支：${NC}"
-    echo -e "${DIM}（仅允许每次删除一个）${NC}"
-    echo ""
-
+    # 构建选项列表
+    local options=()
     for i in "${!WORKTREE_BRANCHES[@]}"; do
-        local idx=$((i + 1))
-        echo -e "  ${BOLD}[$idx]${NC} ${WORKTREE_BRANCHES[$i]}"
-        echo -e "      ${DIM}${WORKTREE_DIRS[$i]}${NC}"
+        options+=("${WORKTREE_BRANCHES[$i]}  ${DIM}${WORKTREE_DIRS[$i]}${NC}")
     done
 
-    echo ""
-    read -rp "请选择 [1-$count]（输入 0 返回主菜单）: " choice
+    local choice
+    if select_menu choice "${CYAN}${BOLD}◆ 选择要删除的 Worktree 分支${NC}" "${options[@]}"; then
+        local selected_branch="${WORKTREE_BRANCHES[$choice]}"
+        local selected_dir="${WORKTREE_DIRS[$choice]}"
 
-    # 返回主菜单
-    if [[ "$choice" == "0" ]]; then
-        show_main_menu
-        return
-    fi
+        # 二次确认（使用上下键选择，默认高亮在"否"上）
+        echo ""
+        echo -e "  ${YELLOW}${BOLD}即将删除以下 Worktree：${NC}"
+        echo -e "  分支：${BOLD}$selected_branch${NC}"
+        echo -e "  目录：$selected_dir"
+        echo -e "  ${RED}此操作将删除该目录下所有未提交的修改！${NC}"
 
-    # 校验输入
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt $count ]]; then
-        error "无效的选择：$choice"
-        exit 1
-    fi
+        local confirm
+        if select_menu confirm "${YELLOW}确认删除？${NC}" "否，取消删除" "是，确认删除"; then
+            if [[ $confirm -ne 1 ]]; then
+                # 选了"否"
+                info "已取消删除。"
+                echo ""
+                read -rp "按 Enter 返回主菜单..." _
+                show_main_menu
+                return
+            fi
+        else
+            # ESC 取消
+            info "已取消删除。"
+            echo ""
+            read -rp "按 Enter 返回主菜单..." _
+            show_main_menu
+            return
+        fi
 
-    local selected_idx=$((choice - 1))
-    local selected_branch="${WORKTREE_BRANCHES[$selected_idx]}"
-    local selected_dir="${WORKTREE_DIRS[$selected_idx]}"
+        # 执行删除
+        echo ""
+        info "正在删除 worktree..."
 
-    echo ""
-    echo -e "${YELLOW}${BOLD}确认删除以下 Worktree？${NC}"
-    echo -e "  分支：${BOLD}$selected_branch${NC}"
-    echo -e "  目录：$selected_dir"
-    echo ""
-    echo -e "  ${RED}此操作将删除该目录下所有未提交的修改！${NC}"
-    echo ""
-    read -rp "输入 yes 确认删除: " confirm
+        if ! git worktree remove "$selected_dir" 2>&1; then
+            echo ""
+            warn "正常删除失败，尝试强制删除..."
 
-    if [[ "$confirm" != "yes" ]]; then
-        info "已取消删除。"
+            if ! git worktree remove --force "$selected_dir" 2>&1; then
+                echo ""
+                error "强制删除也失败了。请手动处理："
+                echo "  1. rm -rf $selected_dir"
+                echo "  2. git worktree prune"
+                exit 1
+            fi
+        fi
+
+        # 删除对应的本地分支
+        if git show-ref --verify --quiet "refs/heads/$selected_branch" 2>/dev/null; then
+            local del_branch_choice
+            if select_menu del_branch_choice "${CYAN}是否同时删除本地分支 '${selected_branch}'？${NC}" "否，保留分支" "是，删除分支"; then
+                if [[ $del_branch_choice -eq 1 ]]; then
+                    if ! git branch -D "$selected_branch" 2>&1; then
+                        warn "分支删除失败，可能需要手动处理。"
+                    else
+                        success "本地分支 '$selected_branch' 已删除。"
+                    fi
+                fi
+            fi
+        fi
+
+        echo ""
+        success "Worktree 已删除：$selected_dir"
         echo ""
         read -rp "按 Enter 返回主菜单..." _
         show_main_menu
-        return
+    else
+        # 用户取消，返回主菜单
+        show_main_menu
     fi
-
-    # 执行删除
-    echo ""
-    info "正在删除 worktree..."
-
-    # 先尝试正常删除
-    if ! git worktree remove "$selected_dir" 2>&1; then
-        echo ""
-        warn "正常删除失败，尝试强制删除..."
-
-        if ! git worktree remove --force "$selected_dir" 2>&1; then
-            echo ""
-            error "强制删除也失败了。请手动处理："
-            echo "  1. rm -rf $selected_dir"
-            echo "  2. git worktree prune"
-            exit 1
-        fi
-    fi
-
-    # 删除对应的本地分支（如果存在）
-    if git show-ref --verify --quiet "refs/heads/$selected_branch" 2>/dev/null; then
-        echo ""
-        read -rp "是否同时删除本地分支 '$selected_branch'？[y/N]: " del_branch
-        if [[ "$del_branch" =~ ^[yY]$ ]]; then
-            if ! git branch -D "$selected_branch" 2>&1; then
-                warn "分支删除失败，可能需要手动处理。"
-            else
-                success "本地分支 '$selected_branch' 已删除。"
-            fi
-        fi
-    fi
-
-    echo ""
-    success "Worktree 已删除：$selected_dir"
-    echo ""
-    read -rp "按 Enter 返回主菜单..." _
-    show_main_menu
 }
 
-# 主菜单（仅在 main 分支显示）
+# ============================================================
+# 主菜单
+# ============================================================
 show_main_menu() {
-    # 刷新 worktree 列表
     get_worktree_list
 
     local has_worktrees=false
@@ -418,57 +762,58 @@ show_main_menu() {
     echo -e "  ${BOLD}Claude Code 启动器${NC}"
     echo -e "  ${DIM}项目：${PROJECT_NAME} | 分支：${CURRENT_BRANCH}${NC}"
     separator
-    echo ""
 
-    echo -e "  ${BOLD}[1]${NC} 在 ${BOLD}${CURRENT_BRANCH}${NC} 分支上启动 Claude"
+    # 构建菜单选项
+    local menu_options=()
+    local menu_actions=()
 
-    if [[ "$has_worktrees" == true ]]; then
-        echo -e "  ${BOLD}[2]${NC} 切换到已有的 Worktree 分支"
-    fi
-
-    echo -e "  ${BOLD}[3]${NC} 创建新的 Worktree 分支"
+    menu_options+=("在 ${BOLD}${CURRENT_BRANCH}${NC} 分支上启动 Claude")
+    menu_actions+=("launch_current")
 
     if [[ "$has_worktrees" == true ]]; then
-        echo -e "  ${BOLD}[4]${NC} 删除已有的 Worktree 分支"
+        menu_options+=("切换到已有的 Worktree 分支")
+        menu_actions+=("select_worktree")
     fi
 
-    echo -e "  ${BOLD}[0]${NC} 退出"
-    echo ""
+    menu_options+=("创建新的 Worktree 分支")
+    menu_actions+=("create_worktree")
 
-    read -rp "请选择: " menu_choice
+    if [[ "$has_worktrees" == true ]]; then
+        menu_options+=("删除已有的 Worktree 分支")
+        menu_actions+=("delete_worktree")
+    fi
 
-    case "$menu_choice" in
-        1)
-            launch_claude "$CURRENT_BRANCH" "$(pwd)"
-            ;;
-        2)
-            if [[ "$has_worktrees" == true ]]; then
+    menu_options+=("退出")
+    menu_actions+=("exit_app")
+
+    local choice
+    if select_menu choice "${CYAN}${BOLD}◆ 请选择操作${NC}" "${menu_options[@]}"; then
+        local action="${menu_actions[$choice]}"
+
+        case "$action" in
+            launch_current)
+                launch_claude "$CURRENT_BRANCH" "$(pwd)"
+                ;;
+            select_worktree)
                 select_existing_worktree
-            else
-                error "无效的选择。"
-                show_main_menu
-            fi
-            ;;
-        3)
-            create_new_worktree
-            ;;
-        4)
-            if [[ "$has_worktrees" == true ]]; then
+                ;;
+            create_worktree)
+                create_new_worktree
+                ;;
+            delete_worktree)
                 delete_existing_worktree
-            else
-                error "无效的选择。"
-                show_main_menu
-            fi
-            ;;
-        0)
-            info "已退出。"
-            exit 0
-            ;;
-        *)
-            error "无效的选择：$menu_choice"
-            show_main_menu
-            ;;
-    esac
+                ;;
+            exit_app)
+                info "已退出。"
+                exit 0
+                ;;
+        esac
+    else
+        # ESC 取消 = 退出
+        echo ""
+        info "已退出。"
+        exit 0
+    fi
 }
 
 # ============================================================
@@ -477,34 +822,23 @@ show_main_menu() {
 main() {
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║     Claude Code 启动器 v1.0         ║${NC}"
+    echo -e "${BOLD}║     Claude Code 启动器 v2.0         ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════╝${NC}"
     echo ""
 
-    # 步骤 1：检查 Claude 安装
     check_claude_installed
-
-    # 步骤 2：检查用户权限
     check_not_root
-
-    # 步骤 3：检查 Git 仓库（非 Git 仓库会直接启动 Claude 并退出）
     check_git_repo
-
-    # 步骤 4：获取项目信息
     get_project_info
 
     info "项目：$PROJECT_NAME | 当前分支：$CURRENT_BRANCH"
 
-    # 步骤 5：分支路由
     if [[ "$IS_WORKTREE" == true ]]; then
-        # 已经在 worktree 分支上，直接启动
         success "当前处于 Worktree 分支，直接启动 Claude。"
         launch_claude "$CURRENT_BRANCH" "$(pwd)"
     else
-        # 在主仓库（main 分支），显示菜单
         show_main_menu
     fi
 }
 
-# 执行主流程
 main
